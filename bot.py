@@ -1,5 +1,6 @@
 import os
 import asyncio
+import re
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
@@ -40,19 +41,33 @@ async def process_callback(callback: types.CallbackQuery):
     try:
         if "mp4" in mode or "both" in mode:
             path = await download_video(url)
-            await bot.send_chat_action(callback.message.chat.id, "upload_video")  # ← FIXED LINE
-            await callback.message.answer_video(FSInputFile(path), caption="EveOps • No watermarks")
-            os.remove(path)
+            if path:
+                await bot.send_chat_action(callback.message.chat.id, "upload_video")
+                await callback.message.answer_video(FSInputFile(path), caption="EveOps • No watermarks")
+                os.remove(path)
+            else:
+                await callback.message.edit_text("Failed to download video")
 
         if "mp3" in mode or "both" in mode:
             path = await download_audio(url)
-            await bot.send_chat_action(callback.message.chat.id, "upload_document")  # ← FIXED LINE
-            await callback.message.answer_audio(FSInputFile(path), caption="EveOps • 320kbps MP3")
-            os.remove(path)
+            if path:
+                await bot.send_chat_action(callback.message.chat.id, "upload_document")
+                await callback.message.answer_audio(FSInputFile(path), caption="EveOps • 320kbps MP3")
+                os.remove(path)
+            else:
+                await callback.message.edit_text("Failed to download audio")
 
         await callback.message.delete()
     except Exception as e:
-        await callback.message.edit_text(f"Failed: {str(e)}")
+        error_msg = str(e)
+        if "File name too long" in error_msg:
+            error_msg = "Download failed: File name too long. Please try a different video."
+        elif "Unsupported URL" in error_msg:
+            error_msg = "This platform is not supported or the video is private."
+        elif "Private video" in error_msg:
+            error_msg = "This video is private or requires login."
+        
+        await callback.message.edit_text(f"Failed: {error_msg}")
 
 async def main():
     print("EveOps Bot ONLINE!")
