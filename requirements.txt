@@ -1,3 +1,4 @@
 aiogram==3.13.1
-yt-dlp-nightly==2025.11.27  # Nightly for TikTok/FB fixes
+yt-dlp==2024.10.22  # Stable version (nightly can cause path bugs)
 python-dotenv==1.0.1
+moviepy==1.0.3  # For auto-compression if >50MB
