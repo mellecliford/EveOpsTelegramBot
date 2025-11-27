@@ -1,71 +1,44 @@
 import yt_dlp
 import os
 import asyncio
-import tempfile
-import shutil
-from moviepy.editor import VideoFileClip  # For compression
-
-def compress_video_if_needed(input_path, max_size_mb=45):  # Leave headroom under 50MB
-    file_size_mb = os.path.getsize(input_path) / (1024 * 1024)
-    if file_size_mb <= max_size_mb:
-        return input_path  # No need
-    
-    print(f"Compressing {file_size_mb:.1f}MB video...")
-    output_path = input_path.replace('.mp4', '_compressed.mp4')
-    clip = VideoFileClip(input_path)
-    clip.write_videofile(output_path, bitrate="1000k", preset="medium")  # ~10-20MB
-    clip.close()
-    os.remove(input_path)  # Clean original
-    return output_path
 
 def _download(url, mode):
-    temp_dir = tempfile.mkdtemp(prefix="eveops_")
-    outtmpl = os.path.join(temp_dir, '%(title).100s.%(ext)s')  # Short title
+    # Create temp folder if it doesn't exist
+    os.makedirs("temp", exist_ok=True)
     
     ydl_opts = {
-        'outtmpl': outtmpl,
-        'format': 'best[filesize<45MB]/bestvideo[height<=720]+bestaudio/best[height<=720]',  # Prefer <45MB, 720p max
+        # FIX 1: Use Video ID for filename instead of Title to avoid "File name too long"
+        'outtmpl': 'temp/%(id)s.%(ext)s', 
+        'format': 'bestvideo+bestaudio/best' if mode == "video" else 'bestaudio/best',
         'merge_output_format': 'mp4' if mode == "video" else None,
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
+        # FIX 2: specific headers to make Facebook/TikTok think we are a real browser
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        },
         'postprocessors': [] if mode == "video" else [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '320',
         }],
-        'extractor_retries': 3,
-        'sleep_interval': 2,
     }
     
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            if mode == "audio" and not filename.endswith(".mp3"):
-                filename = os.path.splitext(filename)[0] + ".mp3"
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        # Prepare the expected filename
+        filename = ydl.prepare_filename(info)
         
-        # Compress video if needed
-        if mode == "video" and os.path.exists(filename):
-            filename = compress_video_if_needed(filename)
-        
-        if not os.path.exists(filename):
-            raise Exception("No file downloaded")
-        
-        # Return absolute path
-        return os.path.abspath(filename)
-        
-    except yt_dlp.utils.DownloadError as e:
-        raise Exception(f"Download failed: {str(e).splitlines()[0]}")
-    except Exception as e:
-        raise Exception(f"Failed: {str(e)}")
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        # Ensure extension correction for audio
+        if mode == "audio":
+            base, _ = os.path.splitext(filename)
+            filename = base + ".mp3"
+            
+    return os.path.abspath(filename)
 
 async def download_video(url):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _download, url, "video")
+    return await asyncio.get_event_loop().run_in_executor(None, _download, url, "video")
 
 async def download_audio(url):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _download, url, "audio")
+    return await asyncio.get_event_loop().run_in_executor(None, _download, url, "audio")
