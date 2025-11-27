@@ -2,30 +2,25 @@ import yt_dlp
 import os
 import asyncio
 import re
-
-def sanitize_filename(filename):
-    """Sanitize filename to avoid filesystem issues"""
-    # Remove or replace problematic characters
-    filename = re.sub(r'[<>:"/\\|?*]', '', filename)
-    filename = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', filename)
-    
-    # Limit filename length (max 100 characters)
-    if len(filename) > 100:
-        name, ext = os.path.splitext(filename)
-        filename = name[:100-len(ext)] + ext
-    
-    return filename
+import uuid
 
 def _download(url, mode):
     os.makedirs("temp", exist_ok=True)
     
+    # Generate a unique short filename
+    file_id = str(uuid.uuid4())[:8]  # First 8 chars of UUID
+    if mode == "video":
+        outtmpl = f'temp/{file_id}.%(ext)s'
+    else:
+        outtmpl = f'temp/{file_id}.%(ext)s'
+    
     ydl_opts = {
-        'outtmpl': 'temp/%(id)s.%(ext)s',  # Use video ID instead of title to avoid long filenames
+        'outtmpl': outtmpl,
         'format': 'bestvideo+bestaudio/best' if mode == "video" else 'bestaudio/best',
         'merge_output_format': 'mp4' if mode == "video" else None,
         'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': False,  # Set to False for debugging
+        'no_warnings': False,
         'extract_flat': False,
         
         # Better compatibility for social media platforms
@@ -54,31 +49,55 @@ def _download(url, mode):
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            # First extract info without downloading
+            info = ydl.extract_info(url, download=False)
             
-            # Get the actual downloaded file
             if '_type' in info and info['_type'] == 'playlist':
                 info = info['entries'][0]
             
-            # Use original filename from yt-dlp
-            original_filename = ydl.prepare_filename(info)
+            # Now download with our simple filename
+            ydl.download([url])
             
-            if mode == "audio":
-                # For audio, change extension to mp3
-                base_name = os.path.splitext(original_filename)[0]
-                final_filename = base_name + ".mp3"
-                
-                # Check if the mp3 file was created by FFmpeg
-                if not os.path.exists(final_filename):
-                    # If not, use the original file
-                    final_filename = original_filename
-            else:
-                final_filename = original_filename
+            # Find the actual downloaded file
+            expected_ext = 'mp4' if mode == "video" else 'mp3'
+            expected_filename = f"temp/{file_id}.{expected_ext}"
             
-            return os.path.abspath(final_filename)
+            # Check if file exists with expected name
+            if os.path.exists(expected_filename):
+                return os.path.abspath(expected_filename)
+            
+            # If not, look for any file with our UUID
+            for file in os.listdir("temp"):
+                if file.startswith(file_id):
+                    file_path = os.path.abspath(f"temp/{file}")
+                    
+                    # If we need mp3 but file is mp4, convert it
+                    if mode == "audio" and file.endswith('.mp4'):
+                        import subprocess
+                        mp3_path = file_path.rsplit('.', 1)[0] + '.mp3'
+                        subprocess.run([
+                            'ffmpeg', '-i', file_path, 
+                            '-codec:a', 'libmp3lame', 
+                            '-q:a', '2', 
+                            mp3_path,
+                            '-y'
+                        ], capture_output=True)
+                        os.remove(file_path)
+                        return mp3_path
+                    
+                    return file_path
+            
+            return None
             
     except Exception as e:
-        print(f"Download error: {e}")
+        print(f"Download error: {str(e)}")
+        # Clean up any partial files
+        try:
+            for file in os.listdir("temp"):
+                if file.startswith(file_id):
+                    os.remove(f"temp/{file}")
+        except:
+            pass
         return None
 
 async def download_video(url):
